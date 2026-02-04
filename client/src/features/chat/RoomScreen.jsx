@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useWebSocket } from '../../hooks/useWebSocket';
 
 const getInitials = (name) =>
   name
@@ -10,19 +9,24 @@ const getInitials = (name) =>
     .slice(0, 2)
     .toUpperCase();
 
-export function RoomScreen({ rooms = [] }) {
+export function RoomScreen({ rooms = [], currentUser, socket }) {
   const { roomId } = useParams();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const { isConnected, lastMessage, sendMessage } = useWebSocket();
+  const [typingUsers, setTypingUsers] = useState([]);
+  const { isConnected, lastMessage, sendMessage } = socket || {};
   const roomKey = useMemo(() => String(roomId), [roomId]);
   const bottomRef = useRef(null);
+  const typingTimeoutsRef = useRef(new Map());
+  const localTypingRef = useRef({ active: false, timeoutId: null });
 
   const activeRoom = useMemo(
     () => rooms.find((room) => String(room.id) === roomKey),
     [rooms, roomKey],
   );
+
+  const currentUserId = currentUser?.id ? String(currentUser.id) : null;
 
   useEffect(() => {
     if (!lastMessage) return;
@@ -47,6 +51,9 @@ export function RoomScreen({ rooms = [] }) {
           return next;
         }
 
+        const isOutgoing =
+          currentUserId && String(incoming.userId) === currentUserId;
+
         return [
           ...prev,
           {
@@ -54,7 +61,8 @@ export function RoomScreen({ rooms = [] }) {
             tempId: incoming.tempId,
             content: incoming.text,
             status: 'delivered',
-            direction: 'in',
+            direction: isOutgoing ? 'out' : 'in',
+            userId: incoming.userId,
           },
         ];
       });
@@ -71,11 +79,177 @@ export function RoomScreen({ rooms = [] }) {
         ),
       );
     }
-  }, [lastMessage, roomKey]);
+
+    if (lastMessage.type === 'message:history') {
+      const payload = lastMessage.payload || {};
+      if (String(payload.roomId) !== roomKey) return;
+      const history = Array.isArray(payload.messages)
+        ? payload.messages
+        : [];
+
+      setMessages((prev) => {
+        const normalized = history.map((item) => ({
+          id: item.id,
+          content: item.text ?? item.content,
+          status: 'delivered',
+          direction:
+            currentUserId && String(item.userId) === currentUserId
+              ? 'out'
+              : 'in',
+          userId: item.userId,
+          userEmail: item.userEmail,
+          createdAt: item.createdAt,
+        }));
+
+        const existingIds = new Set(
+          normalized.map((item) => item.id).filter(Boolean),
+        );
+
+        const pending = prev.filter(
+          (message) =>
+            message.status === 'sending' || message.status === 'failed',
+        );
+
+        const pendingFiltered = pending.filter(
+          (message) => !message.id || !existingIds.has(message.id),
+        );
+
+        return [...normalized, ...pendingFiltered];
+      });
+    }
+  }, [currentUserId, lastMessage, roomKey]);
+
+  useEffect(() => {
+    if (!lastMessage || lastMessage.type !== 'typing:update') return;
+    const payload = lastMessage.payload || {};
+    if (String(payload.roomId) !== roomKey) return;
+    if (currentUserId && String(payload.userId) === currentUserId) return;
+
+    const name = payload.userEmail
+      ? payload.userEmail.split('@')[0]
+      : `User ${payload.userId}`;
+    const timeouts = typingTimeoutsRef.current;
+
+    if (payload.isTyping) {
+      setTypingUsers((prev) => {
+        const exists = prev.some((user) => user.userId === payload.userId);
+        if (exists) return prev;
+        return [...prev, { userId: payload.userId, name }];
+      });
+
+      if (timeouts.has(payload.userId)) {
+        clearTimeout(timeouts.get(payload.userId));
+      }
+
+      const timeoutId = setTimeout(() => {
+        setTypingUsers((prev) =>
+          prev.filter((user) => user.userId !== payload.userId),
+        );
+        timeouts.delete(payload.userId);
+      }, 2500);
+
+      timeouts.set(payload.userId, timeoutId);
+    } else {
+      if (timeouts.has(payload.userId)) {
+        clearTimeout(timeouts.get(payload.userId));
+        timeouts.delete(payload.userId);
+      }
+      setTypingUsers((prev) =>
+        prev.filter((user) => user.userId !== payload.userId),
+      );
+    }
+  }, [currentUserId, lastMessage, roomKey]);
+
+  useEffect(() => {
+    if (!sendMessage || !isConnected) return;
+    setMessages([]);
+    setTypingUsers([]);
+    sendMessage({
+      type: 'room:join',
+      payload: { roomId },
+    }).catch(() => {});
+
+    sendMessage({
+      type: 'room:enter',
+      payload: { roomId, limit: 50 },
+    }).catch(() => {});
+
+    return () => {
+      if (localTypingRef.current.active) {
+        localTypingRef.current.active = false;
+        sendTypingState(false);
+      }
+
+      sendMessage({
+        type: 'room:leave',
+        payload: { roomId },
+      }).catch(() => {});
+    };
+  }, [isConnected, roomId, sendMessage]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
+
+  useEffect(() => {
+    return () => {
+      typingTimeoutsRef.current.forEach((timeoutId) =>
+        clearTimeout(timeoutId),
+      );
+      if (localTypingRef.current.timeoutId) {
+        clearTimeout(localTypingRef.current.timeoutId);
+      }
+    };
+  }, []);
+
+  const sendTypingState = (isTyping) => {
+    if (!sendMessage || !isConnected) return;
+    sendMessage({
+      type: isTyping ? 'typing:start' : 'typing:stop',
+      payload: { roomId },
+    }).catch(() => {});
+  };
+
+  const scheduleTypingStop = () => {
+    if (localTypingRef.current.timeoutId) {
+      clearTimeout(localTypingRef.current.timeoutId);
+    }
+
+    localTypingRef.current.timeoutId = setTimeout(() => {
+      if (localTypingRef.current.active) {
+        localTypingRef.current.active = false;
+        sendTypingState(false);
+      }
+    }, 1400);
+  };
+
+  const handleInputChange = (event) => {
+    const value = event.target.value;
+    setNewMessage(value);
+
+    if (!sendMessage || !isConnected) return;
+    if (!value.trim()) {
+      if (localTypingRef.current.active) {
+        localTypingRef.current.active = false;
+        sendTypingState(false);
+      }
+      return;
+    }
+
+    if (!localTypingRef.current.active) {
+      localTypingRef.current.active = true;
+      sendTypingState(true);
+    }
+
+    scheduleTypingStop();
+  };
+
+  const handleInputBlur = () => {
+    if (localTypingRef.current.active) {
+      localTypingRef.current.active = false;
+      sendTypingState(false);
+    }
+  };
 
   const handleSendMessage = async () => {
     if (!newMessage.trim()) return;
@@ -91,8 +265,15 @@ export function RoomScreen({ rooms = [] }) {
         content: newMessage,
         status: 'sending',
         direction: 'out',
+        userId: currentUser?.id,
+        userEmail: currentUser?.email,
       },
     ]);
+
+    if (!sendMessage) {
+      setIsSending(false);
+      return;
+    }
 
     try {
       await sendMessage({
@@ -109,6 +290,11 @@ export function RoomScreen({ rooms = [] }) {
           msg.tempId === tempId ? { ...msg, status: 'failed' } : msg,
         ),
       );
+    }
+
+    if (localTypingRef.current.active) {
+      localTypingRef.current.active = false;
+      sendTypingState(false);
     }
 
     setNewMessage('');
@@ -154,6 +340,11 @@ export function RoomScreen({ rooms = [] }) {
         {messages.map((message) => {
           const isOutgoing = message.direction === 'out';
           const isFailed = message.status === 'failed';
+          const displayName = isOutgoing
+            ? 'You'
+            : message.userEmail
+            ? message.userEmail.split('@')[0]
+            : `User ${message.userId ?? ''}`.trim();
           const bubbleStyles = isFailed
             ? 'bg-rose-100 text-rose-700'
             : isOutgoing
@@ -166,6 +357,13 @@ export function RoomScreen({ rooms = [] }) {
               className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}
             >
               <div className="max-w-[78%]">
+                <div
+                  className={`mb-1 text-[11px] font-semibold ${
+                    isOutgoing ? 'text-slate-500 text-right' : 'text-slate-500'
+                  }`}
+                >
+                  {displayName}
+                </div>
                 <div
                   className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${bubbleStyles}`}
                 >
@@ -187,15 +385,24 @@ export function RoomScreen({ rooms = [] }) {
         <div ref={bottomRef} />
       </div>
 
-        {/*Message Input Area*/}
+      {typingUsers.length > 0 && (
+        <div className="pb-3 text-xs text-slate-500">
+          {typingUsers.length === 1
+            ? `${typingUsers[0].name} is typing...`
+            : `${typingUsers.length} people are typing...`}
+        </div>
+      )}
+
+      {/*Message Input Area*/}
       <div className="border-t border-slate-200 pt-4">
         <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <input
             type="text"
             value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
+            onChange={handleInputChange}
             placeholder="Type a message here"
-            className="flex-1 bg-transparent text-sm text-slate-700 outline-none rounded-md border border-slate-200"
+            className="flex-1 bg-transparent text-sm text-slate-700 outline-none border-none rounded-lg"
+            onBlur={handleInputBlur}
             onKeyDown={(event) =>
               event.key === 'Enter' && !isSending && handleSendMessage()
             }

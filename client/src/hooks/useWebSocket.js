@@ -3,16 +3,34 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const defaultUrl =
   import.meta.env.VITE_WS_URL || 'ws://localhost:4000'
 
-export function useWebSocket({ url = defaultUrl } = {}) {
+export function useWebSocket({
+  url = defaultUrl,
+  token,
+  enabled = true,
+} = {}) {
   const socketRef = useRef(null)
   const [isConnected, setIsConnected] = useState(false)
   const [lastMessage, setLastMessage] = useState(null)
 
   useEffect(() => {
+    if (!enabled) {
+      return undefined
+    }
+
     const socket = new WebSocket(url)
     socketRef.current = socket
 
-    socket.onopen = () => setIsConnected(true)
+    socket.onopen = () => {
+      setIsConnected(true)
+      if (token) {
+        socket.send(
+          JSON.stringify({
+            type: 'auth:token',
+            payload: { token },
+          }),
+        )
+      }
+    }
     socket.onclose = () => setIsConnected(false)
     socket.onerror = () => setIsConnected(false)
 
@@ -28,7 +46,7 @@ export function useWebSocket({ url = defaultUrl } = {}) {
     return () => {
       socket.close(1000, 'component-unmount')
     }
-  }, [url])
+  }, [enabled, token, url])
 
   const sendMessage = useCallback((message) => {
     return new Promise((resolve, reject) => {
