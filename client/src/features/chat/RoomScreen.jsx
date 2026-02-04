@@ -187,6 +187,7 @@ export function RoomScreen({ rooms = [] }) {
         <div ref={bottomRef} />
       </div>
 
+        {/*Message Input Area*/}
       <div className="border-t border-slate-200 pt-4">
         <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <input
@@ -194,7 +195,7 @@ export function RoomScreen({ rooms = [] }) {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder="Type a message here"
-            className="flex-1 bg-transparent text-sm text-slate-700 outline-none"
+            className="flex-1 bg-transparent text-sm text-slate-700 outline-none rounded-md border border-slate-200"
             onKeyDown={(event) =>
               event.key === 'Enter' && !isSending && handleSendMessage()
             }

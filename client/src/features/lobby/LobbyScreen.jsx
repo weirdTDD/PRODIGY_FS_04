@@ -31,8 +31,8 @@ export function LobbyScreen({ rooms = [], onCreateRoom }) {
               Pick a room from the right or create a new one below.
             </p>
           </div>
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500 text-sm font-semibold text-white shadow-md">
-            WS
+          <div className="flex h-12 px-2 w-16 items-center justify-center rounded-2xl bg-blue-500 text-sm font-semibold text-white shadow-md">
+            Vibely
           </div>
         </div>
 

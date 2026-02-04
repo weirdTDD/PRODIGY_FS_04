@@ -81,8 +81,8 @@ function App() {
       <div className="min-h-screen text-slate-900">
         <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 lg:flex-row lg:gap-8 lg:px-8 lg:py-12">
           <aside className="hidden h-[640px] w-20 flex-col items-center gap-6 rounded-[28px] bg-zinc-900 py-6 shadow-2xl lg:flex">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500 text-sm font-semibold text-white shadow-lg">
-              WS
+            <div className="flex h-12 px-2 w-16 items-center justify-center rounded-2xl bg-blue-500 text-sm font-semibold text-white shadow-lg">
+              Vibely
             </div>
             <nav className="flex flex-col gap-4">
               <NavLink
@@ -133,13 +133,15 @@ function App() {
 
           <main className="flex min-w-0 flex-1 flex-col gap-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+              {/*Search Iput Area*/}
               <div className="flex w-full max-w-md items-center gap-3 rounded-full bg-white px-4 py-3 shadow-sm">
                 <input
                   type="text"
                   placeholder="Search rooms"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  className="w-full bg-transparent text-sm text-slate-700 outline-none"
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none border-none rounded-full"
                 />
                 <button className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-500 text-white shadow-md transition hover:bg-blue-600">
                   <svg
